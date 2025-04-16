@@ -10,9 +10,33 @@ load_dotenv()
 API_KEY = os.getenv('API_KEY')
 client = genai.Client(api_key=API_KEY)
 
+import subprocess
+
 def run_command(command):
-    result = os.system(command=command)
-    return result
+    try:
+        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.stderr:
+            return f"❌ Error: {result.stderr.strip()}"
+        return result.stdout.strip()
+    except Exception as e:
+        return f"❌ Exception: {str(e)}"
+    
+def create_file(params):
+    try:
+        data = json.loads(params) if isinstance(params, str) else params
+        file_name = data.get("filename")
+        content = data.get("content", "")  # optional
+
+        if not file_name:
+            return "❌ Missing 'filename' in input."
+
+        with open(file_name, "w") as f:
+            f.write(content)
+        return f"✅ File '{file_name}' created successfully."
+
+    except Exception as e:
+        return f"❌ Error creating file: {str(e)}"
+
 
 
 
@@ -29,18 +53,32 @@ def get_weather(city: str):
 
 
 available_tools = {
-    "get_weather": {
-        "fn": get_weather,
-        "description": "Takes a city name as an input and returns the current weather for the city"
+    get_weather: {
+        "name": "get_weather",
+        "description": "Takes a city name as an input and returns the current weather for the city",
+        "parameters": "City Names"
     },
-    "run_command": {
-        "fn": run_command,
-        "description": "Takes a command as input to execute on system and returns output"
-    }
+    run_command: {
+        "name": "run_command",
+        "description": "Takes a command as input to execute on system and returns output",
+        "parameters": {
+            "type": "string",
+            "description": "Command to execute on the terminal",
+        }
+
+    },
+    create_file: {
+        "name": "create_file",
+        "description": "Creates a file. Input should be JSON with 'filename' and optionally 'content'.",
+        "parameters": {
+            "type": "string",
+            "description": "File name to create a new file",
+        }
+    },
 }
 
 tool_lines = '\n'.join(
-    f"- {text['fn']}: {text['description']}"
+    f"- {text['name']}: {text['description']}"
     for text in available_tools.values()
 )
 
@@ -74,8 +112,17 @@ system_prompt=f"""
     Output: {{ "step": "plan", "content": "The user is interested in weather data of new york" }}
     Output: {{ "step": "plan", "content": "From the available tools I should call get_weather" }}
     Output: {{ "step": "action", "function": "get_weather", "input": "new york" }}
-    Output: {{ "step": "observe", "output": "12 Degree Cel" }}
+    Output: {{ "step": "observe", "content": "12 Degree Cel" }}
     Output: {{ "step": "output", "content": "The weather for new york seems to be 12 degrees." }}
+
+    Example 2:
+    User Query: Create a file named magic.txt?
+    Output: {{ "step": "plan", "content": "The user is interested in creating a new file" }}
+    Output: {{ "step": "plan", "content": "From the available tools, I should call the run_command" }}
+    Output: {{ "step": "plan", "content": "The command for creating new file will be echo > 'magic.txt'" }}
+    Output: {{ "step": "action", "function": "run_command", "input": "echo > 'magic.txt'" }}
+    Output: {{ "step": "observe", "content": "The file is created" }}
+    Output: {{ "step": "output", "content": "The file has been created in the current directory" }}
 """
 
 # - get_weather: Takes a city name as an input and returns the current weather for the city
@@ -100,6 +147,7 @@ while True:
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',
                 system_instruction=system_prompt,
+                tools=[types.Tool(function_declarations=[available_tools[tool]["name"] for tool in available_tools.keys()])],
             ),
             contents=contents
         )
@@ -119,18 +167,29 @@ while True:
             tool_input = parsed_response.get("input")
 
             if available_tools.get(tool_name, False) != False:
-                output = available_tools[tool_name].get("fn")(tool_input)
-                contents.append(types.ModelContent(
-                    parts=[
-                    types.Part.from_function_call(
-                        name=tool_name,
-                        args=tool_input,
-                    ),
-                    ]
-                ))
-                continue
+                output = available_tools[tool_name].get("name")(tool_input)
+                print("output", output)
+
+                if output:
+                    contents.append(types.CreateFileConfig(
+                        filename=tool_input,
+                        content=output,
+                    ))
+                    continue
+                else:
+                    contents.append(types.ModelContent(
+                        parts=[
+                            types.Part.from_function_call(
+                                name=tool_name,
+                                args=tool_input,
+                            ),
+                        ]
+                    ))
+                    continue
         
         print(f"🤖:: {parsed_response.get("step")} :: {parsed_response.get("content")}")
         break
 
-
+# run_command("echo > Hello-World.txt")
+# run_command("ls -la")
+# run_command("cat Hello-World.txt")
