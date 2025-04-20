@@ -1,8 +1,18 @@
-# Automation
-import json
 import os
-import requests
+import json
+from pathlib import Path 
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+import google.generativeai as genai
 from openai import OpenAI
+
+from langchain_qdrant import QdrantVectorStore
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./gen-lang-client-0749002261-05b6a39a97f3.json"
 
 api_key = os.getenv("GEMINI_API_KEY")
 
@@ -11,39 +21,66 @@ client = OpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-import subprocess
+# Indexing Pipeline for RAG
+def load_documents(file_path: str):
+    loader = PyPDFLoader(file_path=file_path)
+    return loader.load()
 
-def run_command(command):
-    try:
-        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.stderr:
-            return f"❌ Error: {result.stderr.strip()}"
-        return result.stdout.strip()
-    except Exception as e:
-        return f"❌ Exception: {str(e)}"
+# pdf_path = Path(__file__).parent / "nodejs.pdf"
 
-def get_weather(city: str):
-    print("🔨 Tool Called: get_weather", city)
+def text_splitter(docs):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+    )
+    return text_splitter.split_documents(documents=docs)
 
-    url = f"https://wttr.in/{city}?format=%C+%t"
+def embedding_model():
+    return GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001"
+    )
+# embeddings = embedding_model()
 
-    response = requests.get(url)
+def store_documents_in_qdrant(split_docs):
+    return QdrantVectorStore.from_documents(
+        documents=split_docs,
+        url="http://localhost:6333",
+        collection_name="learning_langchain",
+        embedding=embeddings
+    )
 
-    if response.status_code == 200:
-        return f"The weather in {city} is {response.text}"
 
-    return "Something went wrong"
+# embedder = OpenAIEmbeddings(
+#     model="text-embedding-3-large",
+#     api_key=""
+# )
 
-available_tools = {
-    "get_weather": {
-        "fn": get_weather,
-        "description": "Takes a city name as an input and returns the current weather of that city.",
-    },
-    "run_command": {
-        "fn": run_command,
-        "description": "Runs a shell command and returns the output.",
-    },
-}
+
+# vector_store = QdrantVectorStore.from_documents(
+#     documents=[],
+#     url="http://localhost:6333",
+#     collection_name="learning_langchain",
+#     embedding=embeddings
+# )
+
+# vector_store.add_documents(documents=split_docs)
+# print("Injection Done")
+
+def data_retriver(db_url: str, collection_name: str, embeddings):
+    return QdrantVectorStore.from_existing_collection(
+        url=db_url,
+        collection_name=collection_name,
+        embedding=embeddings
+    )
+
+# retriver = QdrantVectorStore.from_existing_collection(
+#     url="http://localhost:6333",
+#     collection_name="learning_langchain",
+#     embedding=embeddings
+# )
+
+# print("Relevant Chunks", search_result)
+
 
 system_prompt = f"""
     You are an helpful AI Assistant who is specialized in resolving user query.
@@ -83,7 +120,16 @@ messages = [
 ]
 
 while True:
+    docs = load_documents("nodejs.pdf")
+    split_docs = text_splitter(docs)
+    embeddings = embedding_model()
+    vector_store = store_documents_in_qdrant(split_docs)
+    retriver = data_retriver("http://localhost:6333", "learning_langchain", embeddings)
     user_query = input('> ')
+
+    search_result = retriver.similarity_search(
+        query="What is FS Module?"
+    )
 
     messages.append({ 'role': 'user', 'content': user_query })
 
