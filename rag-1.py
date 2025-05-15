@@ -13,36 +13,36 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
-api_key = os.getenv("GEMINI_API_KEY")
+api_key = os.getenv("GOOGLE_API_KEY")
 
 client = OpenAI(
     api_key=api_key,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-pdf_path = Path(__file__).parent / "nodejs.pdf"
+pdf_path = Path(__file__).parent / "api-doc.pdf"
 # Indexing Pipeline for RAG
 def load_documents(file_path: str):
     loader = PyPDFLoader(file_path=file_path)
     return loader.load()
 
 def text_splitter(docs):
-    text_splitter = RecursiveCharacterTextSplitter(
+    splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
     )
-    return text_splitter.split_documents(documents=docs)
+    return splitter.split_documents(documents=docs)
 
 def embedding_model():
     return GoogleGenerativeAIEmbeddings(
         model="models/embedding-001"
     )
 
-def store_documents_in_qdrant(split_docs):
+def store_documents_in_qdrant(split_docs, embeddings, url, collection_name):
     return QdrantVectorStore.from_documents(
         documents=split_docs,
-        url="http://localhost:6333",
-        collection_name="learning_langchain",
+        url=url,
+        collection_name=collection_name,
         embedding=embeddings
     )
 
@@ -61,7 +61,16 @@ def similarity_search(retriever, query: str):
 
 
 embeddings = embedding_model()
+print("pdf_path", pdf_path)
+loaded_pdf = load_documents(pdf_path)
+print("loaded_pdf", loaded_pdf)
+splitted_text = text_splitter(loaded_pdf)
+print("splitted_text", splitted_text)
+vector_store = store_documents_in_qdrant(splitted_text, embeddings, "http://localhost:6333", "learning_langchain")
+vector_store.add_documents(documents=splitted_text)
+print("Injection Done")
 while True:
+    
     retriever = data_retriever("http://localhost:6333", "learning_langchain", embeddings)
     user_query = input('> ')
 
